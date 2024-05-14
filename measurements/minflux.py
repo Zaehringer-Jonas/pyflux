@@ -68,6 +68,7 @@ class Frontend(QtGui.QFrame):
         params['filename'] = filename
         params['patternType'] = self.patternType.currentText()
         params['patternLength'] = float(self.lengthEdit.text())
+        params['preBleach'] = self.PreBleachBox.isChecked()
         
         self.paramSignal.emit(params)
         
@@ -136,6 +137,8 @@ class Frontend(QtGui.QFrame):
         
         self.startButton = QtGui.QPushButton('Start')
         self.stopButton = QtGui.QPushButton('Stop')
+        
+        self.PreBleachBox = QtGui.QCheckBox('Prebleach')
 
         subgrid.addWidget(self.measLabel, 0, 0, 1, 2)
         subgrid.addWidget(self.measType, 1, 0, 1, 2)
@@ -150,6 +153,8 @@ class Frontend(QtGui.QFrame):
         subgrid.addWidget(self.acqtimeEdit, 6, 1, 1, 1)
         subgrid.addWidget(self.startButton, 7, 0, 1, 2)
         subgrid.addWidget(self.stopButton, 8, 0, 1, 2)
+        subgrid.addWidget(self.PreBleachBox, 9, 0, 1, 2)
+        
         
         # file/folder widget
         
@@ -217,6 +222,8 @@ class Backend(QtCore.QObject):
     xyzStartSignal = pyqtSignal()
     xyzEndSignal = pyqtSignal(str)
     
+    preBleachSignal = pyqtSignal()
+    
     TCSPCstopSignal = pyqtSignal()
     
     moveToSignal = pyqtSignal(np.ndarray, np.ndarray)
@@ -230,7 +237,6 @@ class Backend(QtCore.QObject):
         self.i = 0 # counter
         self.n = 1
         self.pidevice = pidevice
-  
         self.pattern = np.array([0, 0])
         
         self.measTimer = QtCore.QTimer()
@@ -260,17 +266,20 @@ class Backend(QtCore.QObject):
         Connection: [frontend] paramSignal
         """
         #TODO give params at init
+        try:
+            print("MINFLUX: getting frontend parameters")
+            self.acqtime = params['acqtime']
+            self.measType = params['measType']
+            today = str(date.today()).replace('-', '')
+            self.filename = params['filename'] #+ '_' + today
+            
+            self.patternType = params['patternType']
+            self.patternLength = float(params['patternLength'])/1000 # in micrometer
+            self.preBleach = params['preBleach']
+            self.update_param()
+        except(RuntimeError, ValueError):
+            print("error")
         
-        print("MINFLUX: getting frontend parameters")
-        self.acqtime = params['acqtime']
-        self.measType = params['measType']
-        today = str(date.today()).replace('-', '')
-        self.filename = params['filename'] #+ '_' + today
-        
-        self.patternType = params['patternType']
-        self.patternLength = float(params['patternLength'])/1000 # in micrometer
-        
-        self.update_param()
         
     def update_param(self):
         
@@ -339,15 +348,18 @@ class Backend(QtCore.QObject):
 #        print(datetime.now(), '[minflux] self.r.shape', self.r.shape)
                 
     def start(self):
+        
         self.pidevice.VEL("1", 10000)
         self.pidevice.VEL("2", 10000)
         self.pidevice.VEL("3", 5000)
-        self.setODSignal.emit()
+        
         self.i = 0
         currentXposition = self.pidevice.qPOS(1)[1]
         currentYposition = self.pidevice.qPOS(2)[2]
         currentZposition = self.pidevice.qPOS(3)[3]
         
+        
+        self.preBleachSignal.emit()
         self.initialPos = np.array([currentXposition, currentYposition, currentZposition])
         today = str(date.today()).replace('-', '')
         name = tools.getUniqueName(self.filename)+ '_' +today
@@ -364,6 +376,7 @@ class Backend(QtCore.QObject):
             print('[minflux] self.n, self.acqtime', self.n, self.acqtime)
             self.tcspcPrepareSignal.emit(name, self.acqtime, self.n, False) # signal emitted to tcspc module to start the measurement #TODO do once
             phtime = 4.0  # in s, it takes 4 s for the PH to start the measurement, TO DO: check if this can be reduced (send email to Picoquant, etc)
+            self.setODSignal.emit()
             time.sleep(phtime)
             self.xyzStartSignal.emit()
             self.tcspcStartSignal.emit()
@@ -377,6 +390,7 @@ class Backend(QtCore.QObject):
             time.sleep(0.2)
             self.tcspcPrepareSignal.emit(self.filename, self.acqtime, self.n, False) # signal emitted to tcspc module to start the measurement
             phtime = 4.0  # in s, it takes 4 s for the PH to start the measurement, TO DO: check if this can be reduced (send email to Picoquant, etc)
+            self.setODSignal.emit()
             time.sleep(phtime)
             self.xyzStartSignal.emit()
             self.tcspcStartSignal.emit()
