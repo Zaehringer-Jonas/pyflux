@@ -453,7 +453,7 @@ class Backend(QtCore.QObject):
         
         #Turn ZFeedback on ?! 
         # What if NP is interrupting Z Feedback?
-        
+        print("[Pick and Destroy] starting routine")
         self.particle_nr = 0
         
         

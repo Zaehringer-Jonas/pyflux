@@ -182,82 +182,6 @@ def readPT3(inputfile, numRecords):
     return dtime_array, truensync_array
 
 
-def convertHT3_nonp(countlist):
-    oflcorrection = 0
-    dlen = 0
-    T3WRAPAROUND = 1024
-    ntries = 0
-    dtime_array = []#np.zeros(len(countlist))
-    truensync_array = []# np.zeros(len(countlist))
-    channel_array  = []# np.zeros(len(countlist))
-    
-#    print("ok1")
-    for recNum in range(0, len(countlist)):
-        if True:
-            tempvalue = bin(countlist[recNum])[2:]
-            if len(tempvalue) < 32:
-                recordData = (32 - len(tempvalue))*"0"+ tempvalue #mit 0 auffuellen
-            else:
-                recordData = tempvalue
-            ntries += 1
-
-            #print("\n")
-            #print("ntries = ", ntries)
-        else:
-            print("The file ended earlier than expected, at record %d/%d %d."\
-                 % (recNum, len(countlist), dlen))
-            #return dtime_array, truensync_array #TODO:NAJA
-
-            #exit(0)
-        #print(recordData)
-        #print(len(recordData))
-        #print(type(recordData))
-        special = int(recordData[0:1], base=2)
-        channel = int(recordData[1:7], base=2)
-        dtime = int(recordData[7:22], base=2)
-        nsync = int(recordData[22:32], base=2)
-#        print("ok2")
-        
-        
-        if special == 1:
-            if channel == 0x3F: # Overflow
-                # Number of overflows in nsync. If 0 or old version, it's an
-                # old style single overflow
-                if nsync == 0:
-                    oflcorrection += T3WRAPAROUND
-                    #print("%u OFL * %2x\n" % (recNum, 1))
-                else:
-                    oflcorrection += T3WRAPAROUND * nsync
-                    #print("%u OFL * %2x\n" % (recNum, 1))
-            if channel >= 1 and channel <= 15: # markers
-#                print("ok3")
-                truensync = oflcorrection + nsync
-                dtime_array.append(dtime)
-                truensync_array.append( truensync)
-                channel_array.apped(channel)
-#                print("ok4")
-        else: # regular input channel
-#            print("ok5")
-            truensync = oflcorrection + nsync
-            #print("%u CHN %1x %u %8.0lf %10u\n" % (recNum, channel,\
-            #truensync, (truensync * 1 * 1e9), dtime)) #TODO changeglobRes
-#            print("ok7")
-            dtime_array.append(dtime)
-#            print("ok8")
-            truensync_array.append( truensync)
-#            print("ok9")
-            channel_array.append(channel)
-#            print("ok6")
-            dlen += 1
-            #gotPhoton(truensync, channel, dtime)
-        if recNum % 100000 == 0:
-            sys.stdout.write("\rProgress: %.1f%%" % (float(recNum)*100/float(len(countlist))))
-            
-            sys.stdout.flush()  
-#    print("convnearly done")
-    return dtime_array, truensync_array, channel_array
-    #return dtime_array[truensync_array != 0], truensync_array[truensync_array != 0], channel_array[truensync_array != 0]
-
 
 def readHT3(inputfile, numRecords):
     oflcorrection = 0
@@ -323,14 +247,80 @@ def readHT3(inputfile, numRecords):
 
 
 
-def convertHT3(countlist):
+#def convertHT3(countlist):
+#    oflcorrection = 0
+#    dlen = 0
+#    T3WRAPAROUND = 1024
+#    ntries = 0
+#    dtime_array = np.zeros(len(countlist))
+#    truensync_array = np.zeros(len(countlist))
+#    channel_array = np.zeros(len(countlist))
+#    for recNum in range(0, len(countlist)):
+#        if True:
+#            tempvalue = bin(countlist[recNum])[2:]
+#            if len(tempvalue) < 32:
+#                recordData = (32 - len(tempvalue))*"0"+ tempvalue #mit 0 auffuellen
+#            else:
+#                recordData = tempvalue
+#            ntries += 1
+#
+#            #print("\n")
+#            #print("ntries = ", ntries)
+#        else:
+#            print("The file ended earlier than expected, at record %d/%d %d."\
+#                 % (recNum, len(countlist), dlen))
+#            #return dtime_array, truensync_array #TODO:NAJA
+#
+#            #exit(0)
+#        #print(recordData)
+#        #print(len(recordData))
+#        #print(type(recordData))
+#        special = int(recordData[0:1], base=2)
+#        channel = int(recordData[1:7], base=2)
+#        dtime = int(recordData[7:22], base=2)
+#        nsync = int(recordData[22:32], base=2)
+#        
+#        
+#        
+#        if special == 1:
+#            if channel == 0x3F: # Overflow
+#                # Number of overflows in nsync. If 0 or old version, it's an
+#                # old style single overflow
+#                if nsync == 0:
+#                    oflcorrection += T3WRAPAROUND
+#                    #print("%u OFL * %2x\n" % (recNum, 1))
+#                else:
+#                    oflcorrection += T3WRAPAROUND * nsync
+#                    #print("%u OFL * %2x\n" % (recNum, 1))
+#            if channel >= 1 and channel <= 15: # markers
+#                truensync = oflcorrection + nsync
+#                dtime_array[recNum] = dtime
+#                truensync_array[recNum] = truensync
+#                channel_array[recNum] = channel
+#        else: # regular input channel
+#            truensync = oflcorrection + nsync
+#            #print("%u CHN %1x %u %8.0lf %10u\n" % (recNum, channel,\
+#            #truensync, (truensync * 1 * 1e9), dtime)) #TODO changeglobRes
+#            channel_array[recNum] = channel
+#            dtime_array[recNum] = dtime
+#            truensync_array[recNum] = truensync
+#            
+#            dlen += 1
+#            #gotPhoton(truensync, channel, dtime)
+#        if recNum % 100000 == 0:
+#            sys.stdout.write("\rProgress: %.1f%%" % (float(recNum)*100/float(len(countlist))))
+#            
+#            sys.stdout.flush()  
+#    return dtime_array[truensync_array != 0], truensync_array[truensync_array != 0], channel_array[truensync_array != 0]
+
+def convertHT3_nonp(countlist):
     oflcorrection = 0
     dlen = 0
     T3WRAPAROUND = 1024
     ntries = 0
-    dtime_array = np.zeros(len(countlist))
-    truensync_array = np.zeros(len(countlist))
-    channel_array = np.zeros(len(countlist))
+    dtime_array = []#np.zeros(len(countlist))
+    truensync_array = []# np.zeros(len(countlist))
+    channel_array  = []# np.zeros(len(countlist))
     for recNum in range(0, len(countlist)):
         if True:
             tempvalue = bin(countlist[recNum])[2:]
@@ -370,29 +360,24 @@ def convertHT3(countlist):
                     #print("%u OFL * %2x\n" % (recNum, 1))
             if channel >= 1 and channel <= 15: # markers
                 truensync = oflcorrection + nsync
-                dtime_array[recNum] = dtime
-                truensync_array[recNum] = truensync
-                channel_array[recNum] = channel
+                dtime_array.append(dtime)
+                truensync_array.append( truensync)
+                channel_array.apped(channel)
         else: # regular input channel
             truensync = oflcorrection + nsync
             #print("%u CHN %1x %u %8.0lf %10u\n" % (recNum, channel,\
             #truensync, (truensync * 1 * 1e9), dtime)) #TODO changeglobRes
-            channel_array[recNum] = channel
-            dtime_array[recNum] = dtime
-            truensync_array[recNum] = truensync
+                dtime_array.append(dtime)
+                truensync_array.append( truensync)
+                channel_array.apped(channel)
             
             dlen += 1
             #gotPhoton(truensync, channel, dtime)
-#        if recNum % 100000 == 0:
-#            sys.stdout.write("\rProgress: %.1f%%" % (float(recNum)*100/float(len(countlist))))
+        if recNum % 100000 == 0:
+            sys.stdout.write("\rProgress: %.1f%%" % (float(recNum)*100/float(len(countlist))))
             
-#            sys.stdout.flush()  
+            sys.stdout.flush()  
     return dtime_array[truensync_array != 0], truensync_array[truensync_array != 0], channel_array[truensync_array != 0]
-
-
-
-
-
 
 
 def gotOverflow(count):

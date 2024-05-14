@@ -2,14 +2,14 @@
 """
 Created on Fri Jun  1 14:18:19 2018
 
-
 PyFlux Masterfile
 
 @author:  Jonas Zaehringer
 original template: Luciano A. Masullo
 
 
-"""
+""" 
+
 
 
 def show_exception_and_exit(exc_type, exc_value, tb):
@@ -34,12 +34,12 @@ from pyqtgraph.Qt import QtCore, QtGui
 from pyqtgraph.dockarea import Dock, DockArea
 import qdarkstyle
 
-from instrumental.drivers.cameras import uc480
-from instrumental import instrument, list_instruments
+# from instrumental.drivers.cameras import uc480
+# from instrumental import instrument, list_instruments
 
 import queue
 
-import lantz.drivers.andor.ccd as ccd
+# import lantz.drivers.andor.ccd as ccd
 import drivers.hydraharp as hydraharp
 
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
@@ -47,19 +47,23 @@ from tkinter import Tk, filedialog
 
 #import drivers
 from pipython import GCSDevice, pitools
-import drivers.owis_ps10.ps10 as owis
+import owis_ps10.ps10 as owis
 
 
+import scan
+import tcspc
+#import tcspc as tcspc
 
-import scan_FLIM_v2 as scan
-import tcspc as tcspc
-import xyz_tracking_multitarget_newcam_mp as xyz_tracking_multitarget_newcam
+import drivers.hydraharp_livetcspc as hydraharp
+#import drivers.AOTF as AOTF
 
-import measurements.minflux as minflux
+import xyz_tracking as xyz_tracking_multitarget_newcam
+#import xyz_tracking_multitarget_newcam as xyz_tracking_multitarget_newcam
+import measurements.LiveMinflux as minflux
 import measurements.psf as psf
-import measurements.PickAndDestroy as PickAndDestroy
-
-
+import measurements.PickAndDestroy_pco as PickAndDestroy
+import aotf as aotf
+import drivers.AOTF_driver as AOTF_driver
 import tools.tools as tools
 
 try:
@@ -69,15 +73,91 @@ try:
 except ImportError:
     configure_path = None
 
-    
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK, TLCamera, Frame
 from thorlabs_tsi_sdk.tl_camera_enums import SENSOR_TYPE
 from thorlabs_tsi_sdk.tl_mono_to_color_processor import MonoToColorProcessorSDK
 
-
+#import dill
+#import pathos.multiprocessing as mp
 import multiprocessing as mp
 
 π = np.pi
+
+
+
+
+
+
+
+def init_Xilinx():
+    
+    global lib, sbuf
+    
+
+    cur_dir = os.path.abspath(os.path.dirname(__file__)) # Specifies the current directory.
+
+    print(cur_dir)
+    
+    ximc_dir = os.path.join(cur_dir, "..","Xilab","ximc") # Formation of the directory name with all dependencies. The dependencies for the examples are located in the ximc directory.
+    ximc_package_dir = os.path.join(ximc_dir, "crossplatform", "wrappers", "python") # Formation of the directory name with python dependencies.
+       
+#        print(lib)
+#
+#        sbuf = create_string_buffer(64)
+#        lib.ximc_version(sbuf)
+    
+    # Set bindy (network) keyfile. Must be called before any call to "enumerate_devices" or "open_device" if you
+    # wish to use network-attached controllers. Accepts both absolute and relative paths, relative paths are resolved
+    # relative to the process working directory. If you do not need network devices then "set_bindy_key" is optional.
+    # In Python make sure to pass byte-array object to this function (b"string literal").
+    result = lib.set_bindy_key(os.path.join(ximc_dir, "win32", "keyfile.sqlite").encode("utf-8"))
+    if result != Result.Ok:
+        lib.set_bindy_key("keyfile.sqlite".encode("utf-8")) # Search for the key file in the current directory.
+    
+    # This is device search and enumeration with probing. It gives more information about devices.
+    probe_flags = EnumerateFlags.ENUMERATE_PROBE + EnumerateFlags.ENUMERATE_NETWORK
+    enum_hints = b"addr="
+    # enum_hints = b"addr=" # Use this hint string for broadcast enumerate
+    devenum = lib.enumerate_devices(probe_flags, enum_hints)
+    print("Device enum handle: " + repr(devenum))
+    print("Device enum handle type: " + repr(type(devenum)))
+    dev_count = lib.get_device_count(devenum)
+    controller_name = controller_name_t()
+    for dev_ind in range(0, dev_count):
+        enum_name = lib.get_device_name(devenum, dev_ind)
+        result = lib.get_enumerate_device_controller_name(devenum, dev_ind, byref(controller_name))
+        if result == Result.Ok:
+            print("Enumerated device #{} name (port name): ".format(dev_ind) + repr(enum_name) + ". Friendly name: " + repr(controller_name.ControllerName) + ".")
+
+    
+    open_name = None
+    if len(sys.argv) > 1:
+        open_name = sys.argv[1]
+    elif dev_count > 0:
+        open_name = lib.get_device_name(devenum, 0)
+    elif sys.version_info >= (3,0):
+        # use URI for virtual device when there is new urllib python3 API
+        tempdir = tempfile.gettempdir() + "/testdevice.bin"
+        if os.altsep:
+            tempdir = tempdir.replace(os.sep, os.altsep)
+        # urlparse build wrong path if scheme is not file
+#            uri = urllib.parse.urlunparse(urllib.parse.ParseResult(scheme="file", \
+#                netloc=None, path=tempdir, params=None, query=None, fragment=None))
+#            open_name = re.sub(r'^file', 'xi-emu', uri).encode()
+#            flag_virtual = 1
+        print("The real controller is not found or busy with another app.")
+    if type(open_name) is str:
+        open_name = open_name.encode()
+
+    print("\nOpen device " + repr(open_name))
+    device_id = lib.open_device(open_name)
+    print("Device id: " + repr(device_id))
+    
+    return lib, device_id
+
+
+
+
 
 
 class Frontend(QtGui.QMainWindow):
@@ -99,8 +179,8 @@ class Frontend(QtGui.QMainWindow):
         fileMenu = menubar.addMenu('Measurement')
         
         self.psfWidget = psf.Frontend()
-        self.minfluxWidget = minflux.Frontend()
-        self.PickAndDestroyWidget = PickAndDestroy.Frontend()        
+#        self.minfluxWidget = minflux.Frontend()
+            
 
         self.psfMeasAction = QtGui.QAction('PSF measurement', self)
         self.psfMeasAction.setStatusTip('Routine to measure one MINFLUX PSF')
@@ -108,15 +188,15 @@ class Frontend(QtGui.QMainWindow):
         
         self.psfMeasAction.triggered.connect(self.psf_measurement)
     
-        self.minfluxMeasAction = QtGui.QAction('MINFLUX measurement', self)
-        self.minfluxMeasAction.setStatusTip('Routine to perform a tcspc-MINFLUX measurement')
-        fileMenu.addAction(self.minfluxMeasAction)
-        
-        self.minfluxMeasAction.triggered.connect(self.minflux_measurement)
-        
-        
+#        self.minfluxMeasAction = QtGui.QAction('MINFLUX measurement', self)
+#        self.minfluxMeasAction.setStatusTip('Routine to perform a tcspc-MINFLUX measurement')
+#        fileMenu.addAction(self.minfluxMeasAction)
+#        
+#        self.minfluxMeasAction.triggered.connect(self.minflux_measurement)
         
         
+        
+        self.PickAndDestroyWidget = PickAndDestroy.Frontend()    
         self.PickAndDestroyMeasAction = QtGui.QAction('Pick and Destroy measurement', self)
         self.PickAndDestroyMeasAction.setStatusTip('Routine to perform multiple tcspc-MINFLUX measurement')
         fileMenu.addAction(self.PickAndDestroyMeasAction)
@@ -152,6 +232,15 @@ class Frontend(QtGui.QMainWindow):
 
         tcspcDock.addWidget(self.tcspcWidget)
         dockArea.addDock(tcspcDock, 'bottom', scanDock)
+        """
+        ## focus lock
+
+        focusDock = Dock("Focus Lock")
+
+        self.focusWidget = focus.Frontend()
+
+        focusDock.addWidget(self.focusWidget)
+        dockArea.addDock(focusDock, 'right')"""
 
         ## xyz tracking
 
@@ -163,12 +252,25 @@ class Frontend(QtGui.QMainWindow):
         dockArea.addDock(xyzDock, 'right')
 #        dockArea.addDock(xyDock, 'top')
 
+
+
+        MINFLUXDock = Dock("MINFLUX measurements")
+
+        self.minfluxWidget = minflux.Frontend()
+
+        MINFLUXDock.addWidget(self.minfluxWidget)
+        dockArea.addDock(MINFLUXDock, 'right', xyzDock)
+
+        self.minfluxWidget.setMinimumSize(500, 800)
         # sizes to fit my screen properly
 
-        self.scanWidget.setMinimumSize(1000, 550)
-        self.xyzWidget.setMinimumSize(800, 300)
-        self.move(1, 1)
+        self.scanWidget.setMinimumSize(1100, 800)
+        self.xyzWidget.setMinimumSize(900, 370)
         
+        self.move(1, 1)
+                
+#        self.PickAndDestroyWidget.show()
+#        self.PickAndDestroyWidget.emit_filename()
     def make_connection(self, backend):
         
         #backend.zWorker.make_connection(self.focusWidget)
@@ -188,6 +290,7 @@ class Frontend(QtGui.QMainWindow):
         
         self.minfluxWidget.show()
         self.minfluxWidget.emit_filename()
+        self.minfluxWidget.emit_param()
 
     def PickAndDestroy_measurement(self):
         
@@ -212,26 +315,30 @@ class Backend(QtCore.QObject):
     xyzEndSignal = pyqtSignal(str)
     xyMoveAndLockSignal = pyqtSignal(np.ndarray)
     
-    def __init__(self, pidevice, hh, owisps10, cam, *args, **kwargs):
+    def __init__(self, pidevice, hh, owisps10, cam, aotf_device, lib, device_id, *args, **kwargs):
         
         super().__init__(*args, **kwargs)
         
         
 #        print("I'm running on CPU #%s" % mp.current_process().name)
         scanTCSPCdata = queue.Queue()
+        MINFLUXdata = queue.Queue()
+        
         
         self.scanWorker = scan.Backend(pidevice, owisps10, scanTCSPCdata)
         #self.zWorker = focus.Backend(scmos, pidevice)
 #        pool = mp.Pool(2, initializer=init, initargs = (1,1))
 #        print(pool)
         
-        self.tcspcWorker = tcspc.Backend(hh, scanTCSPCdata)
+        self.tcspcWorker = tcspc.Backend(hh, scanTCSPCdata, MINFLUXdata)
         self.xyzWorker = xyz_tracking_multitarget_newcam.Backend(cam, pidevice)
         
-        self.minfluxWorker = minflux.Backend(pidevice)
+        self.minfluxWorker = minflux.Backend(pidevice, MINFLUXdata)
         self.psfWorker = psf.Backend()
         
-        self.PickAndDestroyWorker = PickAndDestroy.Backend()
+        self.PickAndDestroyWorker = PickAndDestroy.Backend(pidevice, lib, device_id)
+        
+        self.aotfWorker = aotf.Backend(aotf_device)
             
     def setup_minflux_connections(self):
         
@@ -240,7 +347,9 @@ class Backend(QtCore.QObject):
         self.minfluxWorker.tcspcPrepareSignal.connect(self.tcspcWorker.prepare_minflux)
         self.minfluxWorker.tcspcStartSignal.connect(self.tcspcWorker.measure_minflux)
         
-        self.minfluxWorker.xyzStartSignal.connect(self.xyzWorker.get_lock_signal)
+        self.minfluxWorker.TCSPCstopSignal.connect(self.tcspcWorker.stop_measure)
+        
+        # self.minfluxWorker.xyzStartSignal.connect(self.xyzWorker.get_lock_signal) # moved to tcspc
 #        self.minfluxWorker.xyzStartSignal.connect(self.zWorker.get_lock_signal)
         
         self.minfluxWorker.moveToSignal.connect(self.xyzWorker.get_move_signal)
@@ -249,20 +358,29 @@ class Backend(QtCore.QObject):
         self.minfluxWorker.setODSignal.connect(self.scanWorker.setODtcspc)        
         self.minfluxWorker.xyzEndSignal.connect(self.xyzWorker.get_end_measurement_signal)
         #self.minfluxWorker.xyzEndSignal.connect(self.zWorker.get_end_measurement_signal)
+        self.minfluxWorker.preBleachSignal.connect(self.scanWorker.prebleach)   
+        self.tcspcWorker.MINFLUXdataSignal.connect(self.minfluxWorker.LiveMINFLUXanalysis)
+        
+        
+        self.minfluxWorker.initAOTFSignal.connect(self.aotfWorker.get_init_Signal)   
+        self.minfluxWorker.stopALEXSignal.connect(self.aotfWorker.stopALEX)   
+        
+        
         
         
     def setup_pickanddestroy_connections(self):
         self.scanWorker.found_pick_PickandDestroy.connect(self.PickAndDestroyWorker.Destroy_PickandDestroy)
         self.PickAndDestroyWorker.scan_PickAndDestroySignal.connect(self.scanWorker.find_PickandDestroy)
         self.PickAndDestroyWorker.MINFLUXDestroy_PickAndDestroySignal.connect(self.minfluxWorker.Destroy_PickAndDestroy)
+        self.PickAndDestroyWorker.detectAuNRSignal.connect(self.xyzWorker.autodetect_NP)
         
         self.PickAndDestroyWorker.requestScanImagetoScanSignal.connect(self.scanWorker.sendImagetoPD)
-        self.scanWorker.imageSignalPD.connect(self.PickAndDestroyWorker.getScanImage)
-        
+#        self.scanWorker.imageSignalPD.connect(self.PickAndDestroyWorker.getScanImage)
+        self.PickAndDestroyWorker.WideFieldShutterSignal.connect(self.scanWorker.toggle_WideFieldshutter)
         
         
         self.tcspcWorker.tcspcPickAndDestroySignal.connect(self.PickAndDestroyWorker.loop_PickandDestroy)
-        
+        self.xyzWorker.emitCorrectedMovementSignal.connect(self.PickAndDestroyWorker.CorrectedMovement)
         
         
     def setup_psf_connections(self):
@@ -293,6 +411,10 @@ class Backend(QtCore.QObject):
         self.scanWorker.tcspcCloseConnection.connect(self.tcspcWorker.closeconnection)
         self.scanWorker.tcspcMeasureScanPointSignal.connect(self.tcspcWorker.measure_fastscan_Point)
         
+        self.scanWorker.setAOTFonSignal.connect(self.aotfWorker.setall)
+        self.scanWorker.setgreenAOTFonSignal.connect(self.aotfWorker.set_green)
+        self.scanWorker.setredAOTFonSignal.connect(self.aotfWorker.set_red)
+        
         
         
     def setup_tcspc_connections(self):
@@ -300,7 +422,15 @@ class Backend(QtCore.QObject):
         self.tcspcWorker.toggleShutterSignal.connect(self.scanWorker.toggle_shutter)
         self.tcspcWorker.toggleShutterSignalMINFLUX.connect(self.scanWorker.toggle_shutter_all)
         self.tcspcWorker.setODSignal.connect(self.scanWorker.setODtcspc)
-                
+        
+        self.tcspcWorker.startAOTFsequenceSignal.connect(self.aotfWorker.start_timer)
+        
+        self.tcspcWorker.xyzStartSignal.connect(self.xyzWorker.get_lock_signal)
+        self.tcspcWorker.xyzEndSignal.connect(self.xyzWorker.get_end_measurement_signal)
+        
+    
+        
+        
     
     
     def make_connection(self, frontend):
@@ -331,9 +461,16 @@ class Backend(QtCore.QObject):
         #self.zWorker.stop()
         self.tcspcWorker.stop()
         self.xyzWorker.stop()
+        self.aotfWorker.stop()
+        self.PickAndDestroyWorker.stop()
 
 if __name__ == '__main__':
+    
 
+    
+    
+    
+    
     app = QtGui.QApplication([])
     #app.setStyle(QtGui.QStyleFactory.create('fusion'))
     dark_stylesheet = qdarkstyle.load_stylesheet_pyqt5()
@@ -343,14 +480,51 @@ if __name__ == '__main__':
     app.setWindowIcon(QtGui.QIcon(icon_path))
     gui = Frontend()
     
-    
     sdk =  TLCameraSDK()
     camera_list = sdk.discover_available_cameras()
     cam = sdk.open_camera(camera_list[0])
     
-    
     hh = hydraharp.HydraHarp400()
+    hhWorkerThread = QtCore.QThread()
+    hh.moveToThread(hhWorkerThread)
     
+    hhWorkerThread.start()
+    aotf_device = AOTF_driver.AOTF64Bit(python32_exe = "C:/Users/MINFLUX/AppData/Local/Programs/Python/Python36-32/python")
+    
+    
+    
+    
+    from ctypes import *
+    import platform
+    cur_dir = os.path.abspath(os.path.dirname(__file__)) # Specifies the current directory.
+
+    print(cur_dir)
+    
+    ximc_dir = os.path.join(cur_dir, "..","Xilab","ximc") # Formation of the directory name with all dependencies. The dependencies for the examples are located in the ximc directory.
+    ximc_package_dir = os.path.join(ximc_dir, "crossplatform", "wrappers", "python") # Formation of the directory name with python dependencies.
+    sys.path.append(ximc_package_dir)
+    ##
+    #print(cur_dir)
+    #print(ximc_dir)
+    #            
+    #        cur_dir = os.path.abspath(os.path.dirname(__file__)) # Specifies the current directory.
+    #        ximc_dir = os.path.join(cur_dir, "..",) # Formation of the directory name with all dependencies. The dependencies for the examples are located in the ximc directory.
+    #        ximc_package_dir = os.path.join(ximc_dir, "crossplatform", "wrappers", "python") # Formation of the directory name with python dependencies.
+    #        sys.path.append(ximc_package_dir)
+    if platform.system() == "Windows":
+    # Determining the directory with dependencies for windows depending on the bit depth.
+        arch_dir = "win64" if "64" in platform.architecture()[0] else "win32" # 
+        libdir = os.path.join(ximc_dir, arch_dir)
+        os.environ["Path"] = libdir + ";" + os.environ["Path"] # add dll path into an environment variable
+    try: 
+        from  pyximc import *
+    except ImportError as err:
+        print("error pyximc")
+    #        
+    sbuf = create_string_buffer(64)
+    lib.ximc_version(sbuf)
+    print("init-xilinx")
+    lib, device_id = init_Xilinx()
     CONTROLLERNAME = 'E-727'
     STAGES = ('P-733.3CD',)
     REFMODES = None
@@ -359,7 +533,6 @@ if __name__ == '__main__':
     TCSPCdone = False
 
     owisps10 = owis.PS10("PS10-1_2.owi")
-    
     
     with GCSDevice(CONTROLLERNAME) as pidevice:
         pidevice.ConnectUSB(serialnum='0118038033')
@@ -373,8 +546,31 @@ if __name__ == '__main__':
 
 
         #scan.setupDevice(pidevice)
+        worker = Backend(pidevice, hh, owisps10, cam, aotf_device, lib, device_id)
+        aotfThread = QtCore.QThread()
+        worker.aotfWorker.moveToThread(aotfThread)
+        worker.aotfWorker.alexTimer.moveToThread(aotfThread)
+        worker.aotfWorker.alexTimer.timeout.connect(worker.aotfWorker.do_alex)
+        
+        worker.aotfWorker.sequentialTimer.moveToThread(aotfThread)
+        worker.aotfWorker.sequentialTimer.timeout.connect(worker.aotfWorker.do_sequential)
+    
+    
+        aotfThread.start()
 
-        worker = Backend(pidevice, hh, owisps10, cam)
+
+
+        #Strange with Thread error
+        PickAndDestroyThread = QtCore.QThread()
+        
+        worker.PickAndDestroyWorker.moveToThread(PickAndDestroyThread)
+        worker.PickAndDestroyWorker.livetimer.moveToThread(PickAndDestroyThread)
+        worker.PickAndDestroyWorker.livetimer.timeout.connect(worker.PickAndDestroyWorker.getLiveImage)
+        
+        PickAndDestroyThread.start()
+#        
+
+
 
         gui.make_connection(worker)
         worker.make_connection(gui)
@@ -468,11 +664,11 @@ if __name__ == '__main__':
     
     
     
-    
-        PickAndDestroyThread = QtCore.QThread()
-        worker.PickAndDestroyWorker.moveToThread(PickAndDestroyThread)
-    
-        PickAndDestroyThread.start()
+
+        
+        
+        
+
         # psf worker thread
     
 #    psfThread = QtCore.QThread()

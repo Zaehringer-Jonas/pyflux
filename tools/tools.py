@@ -11,6 +11,8 @@ import os
 from datetime import datetime
 import matplotlib.pyplot as plt
 from scipy.stats import norm, chi2
+from scipy import optimize as opt
+
 
 def convert(x, key):
     
@@ -124,7 +126,8 @@ def saveMINFLUXconfig(main, dateandtime, name, filename=None):
         'Date and time': dateandtime,
         'Initial Position [x0, y0, z0] (µm)': main.initialPos,
         'measType': main.measType,
-        'Acqtime (s)': main.acqtime}
+        'Acqtime (s)': main.acqtime
+        } #todo OD
 
     with open(filename + '.txt', 'w') as configfile:
         config.write(configfile)
@@ -197,10 +200,49 @@ def getUniqueName(name):
         if n > 1:
             name = name.replace('_{}'.format(n - 1), '_{}'.format(n))
         else:
-            name = insertSuffix(name, '_{}'.format(n))
+            name = name + '_1'#insertSuffix_new(name, '_{}'.format(n))
         n += 1
 
     return name
+
+
+def getUniqueNameptu(name, date):
+    
+    n = 1
+    while os.path.exists(name + '_' + date + '_arrays.ptu'):
+        if n > 1:
+            name = name.replace('_{}'.format(n - 1), '_{}'.format(n))
+        else:
+            name = name + '_1' #insertSuffix(name, '_{}'.format(n))
+        n += 1
+
+    return name + '_' + date
+
+def getUniqueNameSPAD(name, date):
+    
+    n = 1
+    while os.path.exists(name + '_' + date + '_arrays_spad.ptu'):
+        if n > 1:
+            name = name.replace('_{}'.format(n - 1), '_{}'.format(n))
+        else:
+            name = name + '_1' #insertSuffix(name, '_{}'.format(n))
+        n += 1
+
+    return name + '_' + date
+
+
+
+def getUniqueNameSPADAPD(name, date):
+    
+    n = 1
+    while os.path.exists(name + '_' + date + '_arrays_spad.ptu') or os.path.exists(name + '_' + date + '_arrays.ptu'):
+        if n > 1:
+            name = name.replace('_{}'.format(n - 1), '_{}'.format(n))
+        else:
+            name = name + '_1' #insertSuffix(name, '_{}'.format(n))
+        n += 1
+
+    return name + '_' + date
 
 
 
@@ -406,4 +448,482 @@ def cov_ellipse(cov, q=None, nsig=None, **kwargs):
     w, h = 2 * np.sqrt(val[:, None] * r2)
     theta = np.degrees(np.arctan2(*vec[::, 0]))
     return w, h, theta
+    
+
+
+
+
+
+def gaussianfit(image, spots, size, pxSize):
+    """
+    Performs a gaussian fit on the image
+
+    Parameters
+    ----------
+    image - np.array
+        
+    spot - x,y middle pos
+    
+    size - +- size is ROI
+    
+    pxSize - pixel size
+    
+    
+    Return
+    ----------
+    massCenter - np.array - in pixel
+        
+
+    """
+    currentx = []
+    currenty = []
+    print(spots)
+#    print(size)
+    for spot in spots:
+#        print(spot)
+        
+        
+        
+        xmin = int(round(spot[0] - size))
+        xmax = int(round(spot[0] + size))
+        ymin = int(round(spot[1] - size))
+        ymax = int(round(spot[1] + size))
+        
+#        xmin, xmax, ymin, ymax = roicoordinate
+        xmin_nm, xmax_nm, ymin_nm, ymax_nm = np.array([xmin, xmax, ymin, ymax]) * pxSize
+#        
+        # select the data of the image corresponding to the ROI
+
+        array = image[xmin:xmax, ymin:ymax] *10
+        
+        # set new reference frame
+        
+        xrange_nm = xmax_nm - xmin_nm
+        yrange_nm = ymax_nm - ymin_nm
+             
+        x_nm = np.arange(0, xrange_nm, pxSize)
+        y_nm = np.arange(0, yrange_nm, pxSize)
+        
+        (Mx_nm, My_nm) = np.meshgrid(x_nm, y_nm)
+        
+        # find max 
+        
+        argmax = np.unravel_index(np.argmax(array, axis=None), array.shape)
+        #print("argmax")
+        #print(argmax)
+        x_center_id = argmax[0]
+        y_center_id = argmax[1]
+        
+        # define area around maximum
+    
+        xrange = size # in px
+        yrange = size # in px
+        
+        xmin_id = int(x_center_id-xrange)
+        xmax_id = int(x_center_id+xrange)
+        
+        ymin_id = int(y_center_id-yrange)
+        ymax_id = int(y_center_id+yrange)
+        
+#        array_sub = array[xmin_id:xmax_id, ymin_id:ymax_id]
+                
+        xsubsize = 2 * xrange
+        ysubsize = 2 * yrange
+        
+#        plt.imshow(array_sub, cmap=cmaps.parula, interpolation='None')
+
+        x_sub_nm = np.arange(0, xsubsize) * pxSize
+        y_sub_nm = np.arange(0, ysubsize) * pxSize
+
+        [Mx_sub, My_sub] = np.meshgrid(x_sub_nm, y_sub_nm)
+        
+#        print(Mx_sub)
+        
+#        print(array)
+        # make initial guess for parameters
+        
+        # bkg = np.min(array)
+        bkg = np.min(array)
+        A = np.max(array) - bkg
+        σ = 3 # nm
+        x0 = x_sub_nm[int(xsubsize/2)]
+        y0 = y_sub_nm[int(ysubsize/2)]
+        
+        initial_guess_G = [[A, x0, y0, σ, σ, bkg]]
+        
+#        fig, ax = plt.subplots(1, 1) 
+#    
+#        ax.imshow(array)
+        
+#        print(initial_guess_G)
+        try:
+            poptG, pcovG = opt.curve_fit(gaussian2D, (Mx_sub, My_sub), 
+                         array.ravel(), p0=initial_guess_G)
+            # print(poptG)
+            # poptG, pcovG = opt.curve_fit(gaussian2D_jonas, (Mx_sub, My_sub), 
+            #                          array.ravel(), p0=initial_guess_G)
+            # poptG = np.around(poptG, 3)
+    
+            [A, x0, y0, σ_x, σ_y, bkg] = poptG
+#            print(x0, y0)
+            
+            
+#            print(x0,y0)
+#            print( Mx_nm[xmin_id, ymin_id],  My_nm[xmin_id, ymin_id])
+#            print(poptG)
+            currentx.append(xmin + x0 )#+ Mx_nm[xmin_id, ymin_id])
+            currenty.append(ymin + y0 )#+ My_nm[xmin_id, ymin_id])    
+        except(RuntimeError, ValueError):
+            
+            print('[xyz_tracking] Gaussian fit did not work')
+            currentx.append(0)
+            currenty.append(0)  
+
+
+        
+        # retrieve results
+
+        
+
+    return np.array(currentx), np.array(currenty)
+
+
+
+
+def gaussianfitsigma(image, spots, size, pxSize):
+    """
+    Performs a gaussian fit on the image
+
+    Parameters
+    ----------
+    image - np.array
+        
+    spot - x,y middle pos
+    
+    size - +- size is ROI
+    
+    pxSize - pixel size
+    
+    
+    Return
+    ----------
+    massCenter - np.array - in pixel
+    
+    sigmas
+        
+
+    """
+    currentx = []
+    currenty = []
+    sigmax = []
+    sigmay = []
+
+    for spot in spots:
+#        print(spot)
+        xmin = spot[0] - size
+        xmax = spot[0] + size
+        ymin = spot[1] - size
+        ymax = spot[1] + size
+        
+#        xmin, xmax, ymin, ymax = roicoordinate
+        xmin_nm, xmax_nm, ymin_nm, ymax_nm = np.array([xmin, xmax, ymin, ymax]) * pxSize
+#        
+        # select the data of the image corresponding to the ROI
+
+        array = image[xmin:xmax, ymin:ymax] *10
+        
+        # set new reference frame
+        
+        xrange_nm = xmax_nm - xmin_nm
+        yrange_nm = ymax_nm - ymin_nm
+             
+        x_nm = np.arange(0, xrange_nm, pxSize)
+        y_nm = np.arange(0, yrange_nm, pxSize)
+        
+        (Mx_nm, My_nm) = np.meshgrid(x_nm, y_nm)
+        
+        # find max 
+        
+        argmax = np.unravel_index(np.argmax(array, axis=None), array.shape)
+        #print("argmax")
+        #print(argmax)
+        x_center_id = argmax[0]
+        y_center_id = argmax[1]
+        
+        # define area around maximum
+    
+        xrange = size # in px
+        yrange = size # in px
+        
+        xmin_id = int(x_center_id-xrange)
+        xmax_id = int(x_center_id+xrange)
+        
+        ymin_id = int(y_center_id-yrange)
+        ymax_id = int(y_center_id+yrange)
+        
+#        array_sub = array[xmin_id:xmax_id, ymin_id:ymax_id]
+                
+        xsubsize = 2 * xrange
+        ysubsize = 2 * yrange
+        
+#        plt.imshow(array_sub, cmap=cmaps.parula, interpolation='None')
+
+        x_sub_nm = np.arange(0, xsubsize) * pxSize
+        y_sub_nm = np.arange(0, ysubsize) * pxSize
+
+        [Mx_sub, My_sub] = np.meshgrid(x_sub_nm, y_sub_nm)
+        
+#        print(Mx_sub)
+        
+#        print(array)
+        # make initial guess for parameters
+        
+        # bkg = np.min(array)
+        bkg = np.min(array)
+        A = np.max(array) - bkg
+        σ = 3 # nm
+        x0 = x_sub_nm[int(xsubsize/2)]
+        y0 = y_sub_nm[int(ysubsize/2)]
+        
+        initial_guess_G = [[A, x0, y0, σ, σ, bkg]]
+        
+#        fig, ax = plt.subplots(1, 1) 
+#    
+#        ax.imshow(array)
+        
+#        print(initial_guess_G)
+        try:
+            poptG, pcovG = opt.curve_fit(gaussian2D, (Mx_sub, My_sub), 
+                         array.ravel(), p0=initial_guess_G)
+            # print(poptG)
+            # poptG, pcovG = opt.curve_fit(gaussian2D_jonas, (Mx_sub, My_sub), 
+            #                          array.ravel(), p0=initial_guess_G)
+            # poptG = np.around(poptG, 3)
+    
+            [A, x0, y0, σ_x, σ_y, bkg] = poptG
+#            print(x0, y0)
+            
+            
+#            print(x0,y0)
+#            print( Mx_nm[xmin_id, ymin_id],  My_nm[xmin_id, ymin_id])
+#            print(poptG)
+            currentx.append(xmin + x0 )#+ Mx_nm[xmin_id, ymin_id])
+            currenty.append(ymin + y0 )#+ My_nm[xmin_id, ymin_id])
+            sigmax.append(σ_x)
+            sigmay.append(σ_y)
+            
+        except(RuntimeError, ValueError):
+            
+            print('[xyz_tracking] Gaussian fit did not work')
+            currentx.append(0)
+            currenty.append(0)  
+            sigmax.append(1000)
+            sigmay.append(1000)
+
+
+        
+        # retrieve results
+
+        
+
+    return np.array(currentx), np.array(currenty), np.array(sigmax), np.array(sigmay)
+
+
+    
+def subtract_background( image, radius=15, light_bg=False):
+    #From https://forum.image.sc/t/background-subtraction-in-scikit-image/39118/4
+    from skimage.morphology import white_tophat, black_tophat, disk
+    
+    str_el = disk(radius) #you can also use 'ball' here to get a slightly smoother result at the cost of increased computing time
+    if light_bg:
+        return black_tophat(image, str_el)
+    else:
+        return white_tophat(image, str_el)
+    
+    
+    
+    
+    
+
+def gaussianfit_new(image, spots, size, pxSize):
+    """
+    Performs a gaussian fit on the image
+
+    Parameters
+    ----------
+    image - np.array
+        
+    spot - x,y middle pos
+    
+    size - +- size is ROI
+    
+    pxSize - pixel size
+    
+    
+    Return
+    ----------
+    massCenter - np.array - in pixel
+        
+
+    """
+    currentx = []
+    currenty = []
+
+    for spot in spots:
+        print(spot)
+        xmin = spot[0] - size
+        xmax = spot[0] + size
+        ymin = spot[1] - size
+        ymax = spot[1] + size
+        
+#        xmin, xmax, ymin, ymax = roicoordinate
+        xmin_nm, xmax_nm, ymin_nm, ymax_nm = np.array([xmin, xmax, ymin, ymax]) * pxSize
+#        
+        # select the data of the image corresponding to the ROI
+
+        array = image[xmin:xmax, ymin:ymax] *10
+        
+        # set new reference frame
+        
+        xrange_nm = xmax_nm - xmin_nm
+        yrange_nm = ymax_nm - ymin_nm
+             
+        x_nm = np.arange(0, xrange_nm, pxSize)
+        y_nm = np.arange(0, yrange_nm, pxSize)
+        
+        (Mx_nm, My_nm) = np.meshgrid(x_nm, y_nm)
+        
+        # find max 
+        
+        argmax = np.unravel_index(np.argmax(array, axis=None), array.shape)
+        #print("argmax")
+        #print(argmax)
+        x_center_id = argmax[0]
+        y_center_id = argmax[1]
+        
+        # define area around maximum
+    
+        xrange = size # in px
+        yrange = size # in px
+        
+        xmin_id = int(x_center_id-xrange)
+        xmax_id = int(x_center_id+xrange)
+        
+        ymin_id = int(y_center_id-yrange)
+        ymax_id = int(y_center_id+yrange)
+        
+#        array_sub = array[xmin_id:xmax_id, ymin_id:ymax_id]
+                
+        xsubsize = 2 * xrange
+        ysubsize = 2 * yrange
+        
+#        plt.imshow(array_sub, cmap=cmaps.parula, interpolation='None')
+
+        x_sub_nm = np.arange(0, xsubsize) * pxSize
+        y_sub_nm = np.arange(0, ysubsize) * pxSize
+
+        [Mx_sub, My_sub] = np.meshgrid(x_sub_nm, y_sub_nm)
+        
+#        print(Mx_sub)
+        
+#        print(array)
+        # make initial guess for parameters
+        
+        bkg = np.min(array)
+        A = np.max(array) - bkg
+        σ = 100 # nm
+        x0 = x_sub_nm[int(xsubsize/2)]
+        y0 = y_sub_nm[int(ysubsize/2)]
+        
+        initial_guess_G = [A, x0, y0, σ, σ, bkg]
+        
+#        fig, ax = plt.subplots(1, 1) 
+#    
+#        ax.imshow(array)
+        
+#        print(initial_guess_G)
+        try:
+            poptG, pcovG = opt.curve_fit(gaussian2D, (Mx_sub, My_sub), 
+                                     array.ravel(), p0=initial_guess_G)
+            poptG = np.around(poptG, 2)
+    
+            A, x0, y0, σ_x, σ_y, bkg = poptG
+            currentx.append(x0 + Mx_nm[xmin_id, ymin_id])
+            currenty.append(y0 + My_nm[xmin_id, ymin_id])    
+        except(RuntimeError, ValueError):
+            
+            print('[xyz_tracking] Gaussian fit did not work')
+            currentx.append(0)
+            currenty.append(0)  
+
+
+        
+        # retrieve results
+
+        
+
+    return np.array(currentx), np.array(currenty)
+
+def calculate_waveletAuNR( input,max_level,k):
+    '''calculate a trous wavelet based on olivo martin 2002'''
+    from scipy.ndimage import convolve1d
+    from skimage.filters import gaussian,threshold_otsu
+    input = gaussian(input)
+    import numpy as np
+    data_size = len(input)
+    out = np.zeros((1080,1440,max_level)) #TODO dont hardcode
+    out[:,:,0] = input
+    for i in range(1,max_level):
+        kernel = np.concatenate(([1/16],np.zeros(2**(i-1)-1),[1/4],np.zeros(2**(i-1)-1),[3/8],np.zeros(2**(i-1)-1),[1/4],np.zeros(2**(i-1)-1),[1/16]))
+        wavelet = convolve1d(input,kernel,mode="reflect",axis=0)
+        wavelet = convolve1d(wavelet,kernel,mode="reflect",axis=1)
+        wavelet = wavelet-out[:,:,i-1]
+        abs = np.abs(wavelet)
+        wavelet[abs<k*np.median(wavelet)] = 0
+        out[:,:,i] = wavelet
+    final_wavelet = np.abs(np.prod(out[:,:,1:],axis=2))
+    final_wavelet = np.ma.log10(final_wavelet).filled(0)
+    final_wavelet[final_wavelet<threshold_otsu(final_wavelet[final_wavelet!=0])]=0
+    return final_wavelet
+
+
+
+        
+def calculate_wavelet( input,max_level,k):
+    '''calculate a trous wavelet based on olivo martin 2002'''
+    from scipy.ndimage import convolve1d
+    from skimage.filters import gaussian,threshold_otsu
+    input = gaussian(input)
+    import numpy as np
+    data_size = len(input)
+    out = np.zeros((data_size,data_size,max_level))
+    out[:,:,0] = input
+    for i in range(1,max_level):
+        kernel = np.concatenate(([1/16],np.zeros(2**(i-1)-1),[1/4],np.zeros(2**(i-1)-1),[3/8],np.zeros(2**(i-1)-1),[1/4],np.zeros(2**(i-1)-1),[1/16]))
+        wavelet = convolve1d(input,kernel,mode="reflect",axis=0)
+        wavelet = convolve1d(wavelet,kernel,mode="reflect",axis=1)
+        wavelet = wavelet-out[:,:,i-1]
+        abs = np.abs(wavelet)
+        wavelet[abs<k*np.median(wavelet)] = 0
+        out[:,:,i] = wavelet
+    final_wavelet = np.abs(np.prod(out[:,:,1:],axis=2))
+    final_wavelet = np.ma.log10(final_wavelet).filled(0)
+    final_wavelet[final_wavelet<threshold_otsu(final_wavelet[final_wavelet!=0])]=0
+    return final_wavelet
+
+def gaussian2D(grid, amplitude, x0, y0, σ_x, σ_y, offset, theta=0):
+    
+    # TO DO (optional): change parametrization to this one
+    # http://mathworld.wolfram.com/BivariateNormalDistribution.html  
+    # supposed to be more robust for the numerical fit
+    
+    x, y = grid
+    x0 = float(x0)
+    y0 = float(y0)   
+    a = (np.cos(theta)**2)/(2*σ_x**2) + (np.sin(theta)**2)/(2*σ_y**2)
+    b = -(np.sin(2*theta))/(4*σ_x**2) + (np.sin(2*theta))/(4*σ_y**2)
+    c = (np.sin(theta)**2)/(2*σ_x**2) + (np.cos(theta)**2)/(2*σ_y**2)
+    G = offset + amplitude*np.exp( - (a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) 
+                            + c*((y-y0)**2)))
+    return G.ravel()
     

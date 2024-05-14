@@ -1,0 +1,7 @@
+[Intensityparameters]
+date and time = Wed Aug  9 15:12:00 2023
+angle = 2.7027027027026804
+od = 3.0
+od slope = 0.0148
+od angle offset = 200.0
+

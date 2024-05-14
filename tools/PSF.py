@@ -140,7 +140,7 @@ def poly_func2Dpl( x0, y0, c00, c01, c02, c10, c11, c12,
             c = np.array([[c00, c01, c02], [c10, c11, c12], 
                           [c20, c21, c22]])
             q = np.polynomial.polynomial.polyval2d((x - x0), (y - y0), c)
-        
+            print(q)
             return q.ravel()
         
         return poly_local
